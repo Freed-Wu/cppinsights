@@ -371,7 +371,9 @@ static void PrintVersion(raw_ostream& ostream)
 }
 //-----------------------------------------------------------------------------
 
-int main(int argc, const char** argv)
+namespace clang::insights {
+
+int Parse(int argc, const char** argv)
 {
     // Headers go first
     using enum GlobalInserts;
@@ -486,8 +488,12 @@ extern struct __mptr* __vtbl_array[];
         EnableGlobalInsert(FuncCxaStart);
         EnableGlobalInsert(FuncCxaAtExit);
     }
+    return tool.run(newFrontendActionFactory<CppInsightFrontendAction>().get());
+}
 
-    int status = tool.run(newFrontendActionFactory<CppInsightFrontendAction>().get());
+int Main(int argc, const char** argv)
+{
+    int status = Parse(argc, argv);
     if (status)
         return status;
     std::string fname = gOutput.getValue();
@@ -502,4 +508,15 @@ extern struct __mptr* __vtbl_array[];
     }
     return status;
 }
+
+}  // namespace clang::insights
+
+extern "C" const char *Cppinsights(int argc, const char** argv)
+{
+    int status = Parse(argc, argv);
+    if (status)
+        return NULL;
+    return ss.str().c_str();
+}
+
 //-----------------------------------------------------------------------------

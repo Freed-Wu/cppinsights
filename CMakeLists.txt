@@ -26,9 +26,10 @@ else()
     set(INSIGHTS_USE_LIBCPP           Off)
 endif()
 
-option(INSIGHTS_USE_SYSTEM_INCLUDES "Elevate to system includes" On )
-option(INSIGHTS_COVERAGE            "Enable code coverage"       Off)
-option(INSIGHTS_STATIC              "Use static linking"         Off)
+option(BUILD_SHARED_LIBS            "Build using shared libraries" On )
+option(INSIGHTS_USE_SYSTEM_INCLUDES "Elevate to system includes"   On )
+option(INSIGHTS_COVERAGE            "Enable code coverage"         Off)
+option(INSIGHTS_STATIC              "Use static linking"           Off)
 
 set(INSIGHTS_LLVM_CONFIG "llvm-config" CACHE STRING "LLVM config executable to use")
 
@@ -523,8 +524,7 @@ if (NOT WIN32)
 endif()
 
 
-# name the executable and all source files
-add_clang_tool(insights
+add_library(cppinsights
     ASTHelpers.cpp
     CodeGenerator.cpp
     CfrontCodeGenerator.cpp
@@ -535,6 +535,12 @@ add_clang_tool(insights
     LifetimeTracker.cpp
     OutputFormatHelper.cpp
 )
+# name the executable and all source files
+add_clang_tool(insights
+    Main.cpp
+)
+target_link_libraries(insights PRIVATE cppinsights)
+# install_files()
 
 if(IS_MSVC_CL)
     # TODO figure out what llvm-config reports and use this configuration
@@ -545,10 +551,10 @@ if(CLANG_LINK_CLANG_DYLIB)
     if (NOT LLVM_LINK_LLVM_DYLIB)
         message(FATAL_ERROR "CLANG_LINK_CLANG_DYLIB and LLVM_LINK_LLVM_DYLIB must have the same value.")
     endif()
-    target_link_libraries(insights PRIVATE clang-cpp)
+    target_link_libraries(cppinsights PRIVATE clang-cpp)
 else()
     # general include also provided by clang-build
-    target_link_libraries(insights
+    target_link_libraries(cppinsights
         PRIVATE
         ${ADDITIONAL_LIBS}
         clangTooling
@@ -560,7 +566,7 @@ if(LLVM_LINK_LLVM_DYLIB)
     if (NOT CLANG_LINK_CLANG_DYLIB)
         message(FATAL_ERROR "CLANG_LINK_CLANG_DYLIB and LLVM_LINK_LLVM_DYLIB must have the same value.")
     endif()
-    target_link_libraries(insights PRIVATE LLVM)
+    target_link_libraries(cppinsights PRIVATE LLVM)
 endif()
 
 if(CLANG_TIDY_EXE AND INSIGHTS_TIDY)

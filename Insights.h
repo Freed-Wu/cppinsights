@@ -66,6 +66,8 @@ enum class GlobalInserts
 //-----------------------------------------------------------------------------
 
 void EnableGlobalInsert(GlobalInserts);
+int Parse(int argc, const char** argv);
+int Main(int argc, const char** argv);
 //-----------------------------------------------------------------------------
 }  // namespace clang::insights
 
