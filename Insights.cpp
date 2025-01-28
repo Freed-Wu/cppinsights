@@ -40,6 +40,12 @@ const InsightsOptions& GetInsightsOptions()
 }
 //-----------------------------------------------------------------------------
 
+InsightsOptions& GetInsightsOptionsRW()
+{
+    return gInsightsOptions;
+}
+//-----------------------------------------------------------------------------
+
 static llvm::cl::OptionCategory gInsightCategory("Insights"sv);
 //-----------------------------------------------------------------------------
 
@@ -130,6 +136,7 @@ public:
                             StringRef /*SearchPath*/,
                             StringRef /*RelativePath*/,
                             const Module* /*Imported*/,
+                            bool /*ModuleImported*/,
                             SrcMgr::CharacteristicKind /*FileType*/) override
     {
         auto expansionLoc = mSm.getExpansionLoc(hashLoc);

@@ -25,6 +25,9 @@
 
 namespace clang::insights {
 
+std::string BuildTemplateParamObjectName(std::string name);
+//-----------------------------------------------------------------------------
+
 std::string BuildInternalVarName(const std::string_view& varName);
 //-----------------------------------------------------------------------------
 
@@ -105,6 +108,7 @@ std::string GetPlainName(const DeclRefExpr& DRE);
 
 std::string GetName(const DeclRefExpr& declRefExpr);
 std::string GetName(const VarDecl& VD);
+std::string GetName(const TemplateParamObjectDecl& decl);
 //-----------------------------------------------------------------------------
 
 STRONG_BOOL(QualifiedName);
@@ -185,7 +189,6 @@ std::string GetDeclContext(const DeclContext*     ctx,
                            WithTemplateParameters withTemplateParameters = WithTemplateParameters::No);
 //-----------------------------------------------------------------------------
 
-const std::string      EvaluateAsFloat(const FloatingLiteral& expr);
 const std::string      GetNoExcept(const FunctionDecl& decl);
 const std::string_view GetConst(const FunctionDecl& decl);
 //-----------------------------------------------------------------------------
@@ -304,6 +307,7 @@ public:
 
     void Print(const TemplateArgument&);
     void Print(const TemplateSpecializationType&);
+    void Print(const TemplateParamObjectDecl&);
     void Print(const TypeConstraint&);
     void Print(const StringLiteral&);
     void Print(const CharacterLiteral&);

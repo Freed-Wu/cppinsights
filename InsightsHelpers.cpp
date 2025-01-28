@@ -180,14 +180,8 @@ BuildNamespace(std::string& fullNamespace, const NestedNameSpecifier* stmt, cons
         case NestedNameSpecifier::NamespaceAlias: fullNamespace.append(stmt->getAsNamespaceAlias()->getName()); break;
 
         case NestedNameSpecifier::TypeSpecWithTemplate:
-            if(
-#if IS_CLANG_NEWER_THAN(17)
-                ElaboratedTypeKeyword::Typename
-#else
-                ElaboratedTypeKeyword::ETK_Typename
-#endif
-                == stmt->getAsType()->getAs<DependentTemplateSpecializationType>()->getKeyword()) {
-                fullNamespace.append(kwTemplateSpace);
+            if(auto* dependentSpecType = stmt->getAsType()->getAs<DependentTemplateSpecializationType>()) {
+                fullNamespace.append(GetElaboratedTypeKeyword(dependentSpecType->getKeyword()));
             }
 
             [[fallthrough]];
@@ -312,21 +306,6 @@ const QualType GetDesugarType(const QualType& QT)
         }
     }
     return QT;
-}
-//-----------------------------------------------------------------------------
-
-const std::string EvaluateAsFloat(const FloatingLiteral& expr)
-{
-    SmallString<16> str{};
-    expr.getValue().toString(str);
-
-    if(std::string::npos == str.find('.')) {
-        /* in case it is a number like 10.0 toString() seems to leave out the .0. However, as this distinguished
-         * between an integer and a floating point literal we need that dot. */
-        str.append(".0"sv);
-    }
-
-    return std::string{str.str()};
 }
 //-----------------------------------------------------------------------------
 
@@ -1135,6 +1114,29 @@ std::string GetName(const NamedDecl& nd, const QualifiedName qualifiedName)
 }
 //-----------------------------------------------------------------------------
 
+std::string BuildTemplateParamObjectName(std::string name)
+{
+    ReplaceAll(name, "{"sv, "_"sv);
+    ReplaceAll(name, "}"sv, "_"sv);
+    ReplaceAll(name, " "sv, ""sv);
+    ReplaceAll(name, ","sv, "_"sv);
+    ReplaceAll(name, "."sv, "_"sv);
+    ReplaceAll(name, "+"sv, "_"sv);
+    ReplaceAll(name, "-"sv, "n"sv);
+
+    return name;
+}
+//-----------------------------------------------------------------------------
+
+std::string GetName(const TemplateParamObjectDecl& decl)
+{
+    StringStream stream{};
+    stream.Print(decl);
+
+    return ScopeHandler::RemoveCurrentScope(BuildTemplateParamObjectName(std::move(stream.str())));
+}
+//-----------------------------------------------------------------------------
+
 std::string GetName(const CXXRecordDecl& RD)
 {
     if(RD.isLambda()) {
@@ -1583,6 +1585,12 @@ void StringStream::Print(const TemplateArgument& arg)
 void StringStream::Print(const TemplateSpecializationType& arg)
 {
     arg.getTemplateName().print(*this, CppInsightsPrintingPolicy{}, TemplateName::Qualified::AsWritten);
+}
+//-----------------------------------------------------------------------------
+
+void StringStream::Print(const TemplateParamObjectDecl& arg)
+{
+    arg.printAsExpr(*this);
 }
 //-----------------------------------------------------------------------------
 

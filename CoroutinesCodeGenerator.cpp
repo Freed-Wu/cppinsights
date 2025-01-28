@@ -112,7 +112,6 @@ class CoroutineASTTransformer : public StmtVisitor<CoroutineASTTransformer>
     CoroutineASTData&                     mASTData;
     Stmt*                                 mStaged{};
     bool                                  mSkip{};
-    bool                                  mFinalSuspend{};
     size_t&                               mSuspendsCount;
     llvm::DenseMap<VarDecl*, MemberExpr*> mVarNamePrefix{};
 
@@ -320,9 +319,7 @@ public:
 
     void VisitCoawaitExpr(CoawaitExpr* stmt)
     {
-        if(not mFinalSuspend) {
-            ++mSuspendsCount;
-        }
+        ++mSuspendsCount;
 
         if(const bool returnsVoid{stmt->getResumeExpr()->getType()->isVoidType()}; returnsVoid) {
             Visit(stmt->getOperand());
@@ -391,13 +388,9 @@ public:
         Visit(stmt->getReturnValueInit());
         Visit(stmt->getExceptionHandler());
         Visit(stmt->getReturnStmtOnAllocFailure());
-
+        Visit(stmt->getFallthroughHandler());
         Visit(stmt->getInitSuspendStmt());
-
-        // final suspend point doesn't need a label
-        mFinalSuspend = true;
         Visit(stmt->getFinalSuspendStmt());
-        mFinalSuspend = false;
     }
 
     void VisitStmt(Stmt* stmt)
@@ -438,12 +431,12 @@ void CoroutinesCodeGenerator::InsertCoroutine(const FunctionDecl& fd, const Coro
             }
         }
 
-        auto& str = ofm.GetString();
+        auto str = std::move(ofm.GetString());
         ReplaceAll(str, "<"sv, ""sv);
         ReplaceAll(str, ":"sv, ""sv);
         ReplaceAll(str, ">"sv, ""sv);
-        ReplaceAll(str, ","sv, ""sv);
-        ReplaceAll(str, " "sv, ""sv);
+
+        str = BuildTemplateParamObjectName(str);
 
         if(fd.isOverloadedOperator()) {
             return StrCat(MakeLineColumnName(ctx.getSourceManager(), stmt->getBeginLoc(), "operator_"sv), str);
@@ -539,13 +532,7 @@ void CoroutinesCodeGenerator::InsertCoroutine(const FunctionDecl& fd, const Coro
     if(const auto* cxxMethodDecl = dyn_cast_or_null<CXXMethodDecl>(&fd)) {
         funParamStorage.reserve(funParams.size() + 1);
 
-        cxxMethodType = cxxMethodDecl->
-#if IS_CLANG_NEWER_THAN(17)
-                        getFunctionObjectParameterType()
-#else
-                        getThisObjectType()
-#endif
-            ;
+        cxxMethodType = cxxMethodDecl->getFunctionObjectParameterType();
 
         // In case we have a member function the first parameter is a reference to this. The following code injects
         // this parameter.
@@ -581,14 +568,7 @@ void CoroutinesCodeGenerator::InsertCoroutine(const FunctionDecl& fd, const Coro
         if(not ctor->param_empty() and
            (getNonRefType(ctor->getParamDecl(0)) == QualType(cxxMethodType.getTypePtrOrNull(), 0))) {
             if(0 == mASTData.mThisExprs.size()) {
-                mASTData.mThisExprs.push_back(
-#if IS_CLANG_NEWER_THAN(17)
-                    CXXThisExpr::Create(ctx, {}, Ptr(cxxMethodType), false)
-#else
-                    new(ctx) CXXThisExpr{{}, Ptr(cxxMethodType), false}
-#endif
-
-                );
+                mASTData.mThisExprs.push_back(CXXThisExpr::Create(ctx, {}, Ptr(cxxMethodType), false));
             }
         } else {
             (void)static_cast<bool>(derefFirstParam);  // set it to false
@@ -756,7 +736,9 @@ void CoroutinesCodeGenerator::InsertArg(const CoroutineBodyStmt* stmt)
         funcBodyStmts.Add(c);
     }
 
-    // InsertArg(stmt->getFallthroughHandler());
+    if(const auto* coReturnVoid = dyn_cast_or_null<CoreturnStmt>(stmt->getFallthroughHandler())) {
+        funcBodyStmts.Add(coReturnVoid);
+    }
 
     auto* gotoFinalSuspend = Goto(FINAL_SUSPEND_NAME);
     funcBodyStmts.Add(gotoFinalSuspend);
@@ -834,10 +816,11 @@ void CoroutinesCodeGenerator::InsertArg(const CallExpr* stmt)
 }
 //-----------------------------------------------------------------------------
 
-static std::optional<std::string> FindValue(llvm::DenseMap<const Expr*, std::string>& map, const Expr* key)
+static std::optional<std::string>
+FindValue(llvm::DenseMap<const Expr*, std::pair<const DeclRefExpr*, std::string>>& map, const Expr* key)
 {
     if(const auto& s = map.find(key); s != map.end()) {
-        return s->second;
+        return s->second.second;
     }
 
     return {};
@@ -855,18 +838,23 @@ void CoroutinesCodeGenerator::InsertArg(const OpaqueValueExpr* stmt)
         // Needs to be internal because a user can create the same type and it gets put into the stack frame
         std::string name{BuildSuspendVarName(stmt)};
 
+        // In case of a coroutine-template the same suspension point can occur multiple times. But to know when to add
+        // the _1 we must match the one from each instantiation. The DeclRefExpr is what distinguishes the same
+        // OpaqueValueExpr between multiple instantiations.
+        const auto* dref = FindDeclRef(sourceExpr);
+
         // The initial_suspend and final_suspend expressions carry the same location info. If we hit such a case,
         // make up another name.
         // Below is a std::find_if. However, the same code looks unreadable with std::find_if
-        for(const auto lookupName{StrCat(CORO_FRAME_ACCESS, name)}; const auto& [k, v] : mOpaqueValues) {
-            if(v == lookupName) {
+        for(const auto lookupName{StrCat(CORO_FRAME_ACCESS, name)}; const auto& [k, value] : mOpaqueValues) {
+            if(auto [thisDeref, v] = value; (thisDeref == dref) and (v == lookupName)) {
                 name += "_1"sv;
                 break;
             }
         }
 
         const auto accessName{StrCat(CORO_FRAME_ACCESS, name)};
-        mOpaqueValues.insert(std::make_pair(sourceExpr, accessName));
+        mOpaqueValues.insert(std::make_pair(sourceExpr, std::make_pair(dref, accessName)));
 
         OutputFormatHelper      ofm{};
         CoroutinesCodeGenerator codeGenerator{ofm, mPosBeforeFunc, mFSMName, mSuspendsCount, mASTData};
@@ -939,16 +927,14 @@ void CoroutinesCodeGenerator::InsertArg(const CoroutineSuspendExpr* stmt)
     Expr*          initializeInitialAwaitResume = nullptr;
 
     auto addInitialAwaitSuspendCalled = [&] {
-        if(eState::FinalSuspend != mState) {
-            bodyStmts.Add(bop);
+        bodyStmts.Add(bop);
 
-            if(eState::InitialSuspend == mState) {
-                mState = eState::Body;
-                // https://timsong-cpp.github.io/cppwp/n4861/dcl.fct.def.coroutine#5.3
-                initializeInitialAwaitResume =
-                    Assign(mASTData.mFrameAccessDeclRef, mASTData.mInitialAwaitResumeCalledField, Bool(true));
-                bodyStmts.Add(initializeInitialAwaitResume);
-            }
+        if(eState::InitialSuspend == mState) {
+            mState = eState::Body;
+            // https://timsong-cpp.github.io/cppwp/n4861/dcl.fct.def.coroutine#5.3
+            initializeInitialAwaitResume =
+                Assign(mASTData.mFrameAccessDeclRef, mASTData.mInitialAwaitResumeCalledField, Bool(true));
+            bodyStmts.Add(initializeInitialAwaitResume);
         }
     };
 
@@ -974,15 +960,15 @@ void CoroutinesCodeGenerator::InsertArg(const CoroutineSuspendExpr* stmt)
         mOutputFormatHelper.AppendNewLine();
     }
 
+    auto* suspendLabel = Label(BuildResumeLabelName(mSuspendsCount));
+    InsertArg(suspendLabel);
+
     if(eState::FinalSuspend == mState) {
         auto* memExpr     = AccessMember(mASTData.mFrameAccessDeclRef, mASTData.mDestroyFnField, true);
         auto* callCoroFSM = Call(memExpr, {mASTData.mFrameAccessDeclRef});
         InsertArg(callCoroFSM);
         return;
     }
-
-    auto* suspendLabel = Label(BuildResumeLabelName(mSuspendsCount));
-    InsertArg(suspendLabel);
 
     const auto* resumeExpr = stmt->getResumeExpr();
 

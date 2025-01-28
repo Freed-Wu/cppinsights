@@ -349,7 +349,10 @@ protected:
     void InsertTemplateGuardEnd(const FunctionDecl* stmt);
 
     /// \brief Insert \c template<> to introduce a template specialization.
-    void InsertTemplateSpecializationHeader() { mOutputFormatHelper.AppendNewLine("template<>"sv); }
+    void InsertTemplateSpecializationHeader(const Decl&);
+
+    void InsertTemplateArgsObjectParam(const ArrayRef<TemplateArgument>& array);
+    void InsertTemplateArgsObjectParam(const TemplateParamObjectDecl& param);
 
     void InsertNamespace(const NestedNameSpecifier* namespaceSpecifier);
     void ParseDeclContext(const DeclContext* Ctx);
@@ -453,7 +456,8 @@ protected:
         nullptr};                        //!< Helper output buffer for std::initializer_list expansion.
     bool mRequiresImplicitReturnZero{};  //!< Track whether this is a function with an imlpicit return 0.
     bool mSkipSemi{};
-    ProcessingPrimaryTemplate mProcessingPrimaryTemplate{};
+    ProcessingPrimaryTemplate                 mProcessingPrimaryTemplate{};
+    static inline std::map<std::string, bool> mSeenDecls{};
 };
 //-----------------------------------------------------------------------------
 
@@ -587,7 +591,7 @@ private:
     std::string                       mFSMName{};
     CoroutineASTData                  mASTData{};
     llvm::DenseMap<const Stmt*, bool> mBinaryExprs{};
-    static inline llvm::DenseMap<const Expr*, std::string>
+    static inline llvm::DenseMap<const Expr*, std::pair<const DeclRefExpr*, std::string>>
         mOpaqueValues{};  ///! Keeps track of the current set of opaque value
 
     QualType GetFrameType() const { return QualType(mASTData.mFrameType->getTypeForDecl(), 0); }
